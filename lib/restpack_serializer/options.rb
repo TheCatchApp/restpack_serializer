@@ -2,7 +2,7 @@ module RestPack::Serializer
   class Options
     attr_accessor :page, :page_size, :include, :filters, :serializer,
                   :model_class, :scope, :context, :include_links,
-                  :sorting
+                  :sorting, :custom_order
 
     def initialize(serializer, params = {}, scope = nil, context = {})
       params.symbolize_keys! if params.respond_to?(:symbolize_keys!)
@@ -25,6 +25,7 @@ module RestPack::Serializer
       @scope = scope || model_class.send(:all)
       @context = context
       @include_links = true
+      @custom_order = reorder_data(params)
     end
 
     def scope_with_filters
@@ -47,6 +48,19 @@ module RestPack::Serializer
       end
     end
 
+    def custom_reorder
+      result = nil
+      if @serializer.respond_to? :custom_reorder
+        result = @serializer.custom_reorder(self)
+      end
+
+      if result
+        return result
+      else
+        return scope.to_a
+      end
+    end
+
     def default_page_size?
       @page_size == RestPack::Serializer.config.page_size
     end
@@ -61,6 +75,10 @@ module RestPack::Serializer
     end
 
     private
+
+    def reorder_data params
+      ['true', '1', 'TRUE', 't'].include?(params["custom_order"]) ? true : false
+    end
 
     def filters_from_params(params, serializer)
       filters = {}

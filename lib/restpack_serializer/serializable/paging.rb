@@ -7,8 +7,16 @@ module RestPack::Serializer::Paging
     end
 
     def page_with_options(options)
-      page = options.scope_with_filters.page(options.page).per(options.page_size)
-      page = page.reorder(options.sorting) if options.sorting.any?
+
+      if(options.custom_order.present?)
+        options.scope_with_filters
+        reordered_array = options.custom_reorder
+
+        page = Kaminari.paginate_array(reordered_array).page(options.page).per(options.page_size)
+      else
+        page = options.scope_with_filters.page(options.page).per(options.page_size)
+        page = page.reorder(options.sorting) if options.sorting.any?
+      end
 
       result = RestPack::Serializer::Result.new
       result.resources[self.key] = serialize_page(page, options)
