@@ -31,9 +31,57 @@ describe RestPack::Serializer do
     end
   end
 
+  context "serializer inheritance" do
+    class BaseSerializer
+      include RestPack::Serializer
+      attributes :name, :colour
+      optional :count
+
+      def name
+        @context[:name]
+      end
+
+      def count
+        99
+      end
+
+      def age
+        -2
+      end
+
+      def colour
+        'purple'
+      end
+
+      def include_colour?
+        false
+      end
+    end
+
+    class DerivedSerializer < BaseSerializer
+      attributes :name, :age, :food, :colour, :count
+
+      def age
+        @context[:age]
+      end
+
+      def food
+        'crackers'
+      end
+    end
+
+    it ".as_json serializes" do
+      serialized = DerivedSerializer.as_json({}, { include_food?: false, name: 'Ben', age: 1 })
+      serialized.should == { #NOTE: I think this should include colour as DerivedSerializer defines it, but this would be a big breaking change
+        name: "Ben",
+        age: 1
+      }
+    end
+  end
+
   class PersonSerializer
     include RestPack::Serializer
-    attributes :id, :name, :description, :href, :admin_info
+    attributes :id, :name, :description, :href, :admin_info, :string_keys
 
     def description
       "This is person ##{id}"
@@ -41,15 +89,29 @@ describe RestPack::Serializer do
 
     def admin_info
       {
-        "key" => "super_secret_sauce",
-        "array" => [
-          { "name" => "Alex" }
+        key: "super_secret_sauce",
+        array: [
+          { name: "Alex" }
         ]
       }
     end
 
     def include_admin_info?
       @context[:is_admin?]
+    end
+
+    def string_keys
+      {
+        "kid_b" => "Ben",
+        "likes" => {
+          "foods" => ["crackers", "stawberries"],
+          "books" => ["Dumpy", "That's Not My Tiger"]
+        }
+      }
+    end
+
+    def include_string_keys?
+      @context[:is_ben?]
     end
 
     def custom_attributes
@@ -135,6 +197,44 @@ describe RestPack::Serializer do
             name: 'Alex'
           ]
         }
+      end
+
+      it "excludes a blacklist of attributes if specified as an array" do
+        serializer.as_json(person, { attribute_blacklist: [:name, :description] }).should == {
+          id: '123',
+          href: '/people/123',
+          custom_key: 'custom value for model id 123'
+        }
+      end
+
+      it "excludes a blacklist of attributes if specified as a string" do
+        serializer.as_json(person, { attribute_blacklist: 'name, description' }).should == {
+          id: '123',
+          href: '/people/123',
+          custom_key: 'custom value for model id 123'
+        }
+      end
+
+      it "includes a whitelist of attributes if specified as an array" do
+        serializer.as_json(person, { attribute_whitelist: [:name, :description] }).should == {
+          name: 'Gavin',
+          description: 'This is person #123',
+          custom_key: 'custom value for model id 123'
+        }
+      end
+
+      it "includes a whitelist of attributes if specified as a string" do
+        serializer.as_json(person, { attribute_whitelist: 'name, description' }).should == {
+          name: 'Gavin',
+          description: 'This is person #123',
+          custom_key: 'custom value for model id 123'
+        }
+      end
+
+      it "raises an exception if both the whitelist and blacklist are provided" do
+        expect do
+          serializer.as_json(person, { attribute_whitelist: [:name], attribute_blacklist: [:id] })
+        end.to raise_error(ArgumentError, "the context can't define both an `attribute_whitelist` and an `attribute_blacklist`")
       end
     end
 

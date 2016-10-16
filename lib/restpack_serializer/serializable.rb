@@ -7,7 +7,6 @@ require_relative "serializable/resource"
 require_relative "serializable/single"
 require_relative "serializable/side_loading"
 require_relative "serializable/side_load_data_builder"
-require_relative "serializable/symbolizer"
 require_relative "serializable/sortable"
 
 module RestPack
@@ -38,23 +37,33 @@ module RestPack
         return model.map { |item| as_json(item, context) }
       end
 
+      apply_whitelist_and_blacklist(context)
       @model, @context = model, context
 
       data = {}
       if self.class.serializable_attributes.present?
-        self.class.serializable_attributes.each do |key, name|
-          data[key] = self.send(name) if include_attribute?(name)
+        self.class.serializable_attributes.each do |key, attribute|
+          method_name = attribute[:include_method_name]
+          name = attribute[:name]
+          if self.class.memoized_has_user_defined_method?(method_name)
+            data[key] = self.send(name) if self.send(method_name)
+          else
+            #the default implementation of `include_abc?`
+            if @context[method_name].nil? || @context[method_name]
+              data[key] = self.send(name)
+            end
+          end
         end
       end
 
       add_custom_attributes(data)
-      add_links(model, data)
+      add_links(model, data) unless self.class.associations.empty?
 
-      Symbolizer.recursive_symbolize(data)
+      data
     end
 
     def custom_attributes
-      {}
+      nil
     end
 
     private
@@ -62,6 +71,41 @@ module RestPack
     def add_custom_attributes(data)
       custom = custom_attributes
       data.merge!(custom) if custom
+    end
+
+    def apply_whitelist_and_blacklist(context)
+      blacklist = context[:attribute_blacklist]
+      whitelist = context[:attribute_whitelist]
+
+      if blacklist.present? && whitelist.present?
+        raise ArgumentError.new "the context can't define both an `attribute_whitelist` and an `attribute_blacklist`"
+      end
+
+      if blacklist.present?
+        blacklist = csv_to_symbol_array(blacklist)
+        self.class.serializable_attributes.each do |key, value|
+          if blacklist.include? key
+            context[value[:include_method_name]] = false
+          end
+        end
+      end
+
+      if whitelist.present?
+        whitelist = csv_to_symbol_array(whitelist)
+        self.class.serializable_attributes.each do |key, value|
+          unless whitelist.include? key
+            context[value[:include_method_name]] = false
+          end
+        end
+      end
+    end
+
+    def csv_to_symbol_array(maybe_csv)
+      if maybe_csv.is_a? String
+        maybe_csv.split(',').map {|a| a.strip.to_sym}
+      else
+        maybe_csv
+      end
     end
 
     def add_links(model, data)
@@ -84,12 +128,34 @@ module RestPack
       data
     end
 
-    def include_attribute?(name)
-      self.send("include_#{name}?".to_sym)
-    end
-
     module ClassMethods
-      attr_accessor :model_class, :href_prefix, :key
+      attr_accessor :model_class, :href_prefix, :key, :user_defined_methods, :track_defined_methods
+
+      def method_added(name)
+        #we track used defined methods so that we can make quick decisions at runtime
+        @user_defined_methods ||= []
+        if @track_defined_methods
+          @user_defined_methods << name
+        end
+      end
+
+      def has_user_defined_method?(method_name)
+        user_defined_methods = self.user_defined_methods || []
+        return true if user_defined_methods.include?(method_name)
+        return self.superclass.try(:has_user_defined_method?, method_name)
+      end
+
+      def memoized_has_user_defined_method?(method_name)
+        @memoized_user_defined_methods ||= {}
+
+        if @memoized_user_defined_methods.has_key? method_name
+          return @memoized_user_defined_methods[method_name]
+        else
+          has_method = has_user_defined_method?(method_name)
+          @memoized_user_defined_methods[method_name] = has_method
+          return has_method
+        end
+      end
 
       def array_as_json(models, context = {})
         new.as_json(models, context)
